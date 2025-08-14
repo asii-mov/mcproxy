@@ -53,6 +53,96 @@ cp mcproxy-config.example.yaml mcproxy-config.yaml
 
 Edit `mcproxy-config.yaml` to configure security policies, rate limits, and server settings.
 
+### Connecting MCP Components
+
+Once the proxy is running, you need to configure your MCP clients and servers to use it:
+
+#### 1. Start your MCP Server
+
+First, start your MCP server on its normal port (e.g., 3000):
+
+```bash
+# Example MCP server
+your-mcp-server --port 3000
+```
+
+#### 2. Start the Security Proxy
+
+Start the proxy pointing to your MCP server:
+
+```bash
+# Proxy listens on 8080, forwards to server on 3000
+npm start -- --port 8080 --server ws://localhost:3000
+```
+
+#### 3. Configure MCP Clients
+
+Update your MCP clients to connect to the proxy instead of directly to the server:
+
+**Before (Direct Connection):**
+```javascript
+const client = new MCPClient('ws://localhost:3000');
+```
+
+**After (Through Proxy):**
+```javascript
+const client = new MCPClient('ws://localhost:8080');
+```
+
+**Claude Desktop Configuration:**
+If using with Claude Desktop, update your `claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "your-server": {
+      "command": "node",
+      "args": ["your-server.js"],
+      "env": {
+        "MCP_SERVER_URL": "ws://localhost:8080"
+      }
+    }
+  }
+}
+```
+
+**Environment Variables:**
+Many MCP implementations use environment variables:
+
+```bash
+# Point client to proxy
+export MCP_SERVER_URL=ws://localhost:8080
+
+# Or for specific implementations
+export MCP_PROXY_URL=ws://localhost:8080
+export MCP_ENDPOINT=ws://localhost:8080
+```
+
+#### 4. Network Configuration
+
+For remote deployments:
+
+```bash
+# Proxy accessible from other machines
+npm start -- --host 0.0.0.0 --port 8080 --server ws://internal-server:3000
+
+# Clients connect to proxy's external IP
+# Client: ws://proxy-server-ip:8080
+# Proxy forwards to: ws://internal-server:3000
+```
+
+#### 5. TLS/SSL Configuration
+
+For production with HTTPS/WSS:
+
+```bash
+# Configure proxy with TLS
+npm start -- --port 8443 --server wss://secure-mcp-server:3000
+
+# Clients use secure connection
+# Client connects to: wss://your-domain:8443
+```
+
 ## Architecture
 
 ```
