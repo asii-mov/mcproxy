@@ -458,6 +458,13 @@ export MCP_PROXY_LOG_LEVEL=debug
 npm start
 ```
 
+## Todo
+
+- [ ] Authentication layer
+- [ ] Role-based access control (RBAC)
+- [ ] Extended metrics and monitoring
+- [ ] Docker containerization
+
 ## Contributing
 
 1. Fork the repository

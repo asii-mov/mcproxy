@@ -116,3 +116,6 @@ dev.yaml
 # Backup files
 *.bak
 *.backup
+
+# Claude Files
+CLAUDE.md
