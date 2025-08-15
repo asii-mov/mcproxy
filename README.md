@@ -143,6 +143,13 @@ npm start -- --port 8443 --server wss://secure-mcp-server:3000
 # Client connects to: wss://your-domain:8443
 ```
 
+## Todo
+
+- [ ] Authentication layer
+- [ ] Role-based access control (RBAC)
+- [ ] Extended metrics and monitoring
+- [ ] Docker containerization
+
 ## Architecture
 
 ```
@@ -457,13 +464,6 @@ npm start -- --verbose
 export MCP_PROXY_LOG_LEVEL=debug
 npm start
 ```
-
-## Todo
-
-- [ ] Authentication layer
-- [ ] Role-based access control (RBAC)
-- [ ] Extended metrics and monitoring
-- [ ] Docker containerization
 
 ## Contributing
 
