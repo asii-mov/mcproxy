@@ -20,7 +20,7 @@ The MCP Security Proxy addresses critical security vulnerabilities in MCP implem
 
 ```bash
 # Clone the repository
-git clone <repository-url>
+git clone <repo-url>
 cd mcproxy
 
 # Install dependencies
