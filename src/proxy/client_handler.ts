@@ -36,7 +36,7 @@ export class ClientHandler extends EventEmitter {
     this.clientWs = clientWs;
     this.config = config;
     this.logger = logger;
-    this.sanitizer = new Sanitizer(config);
+    this.sanitizer = new Sanitizer(config, connectionId);
 
     if (config.rate_limiting?.enabled) {
       this.rateLimiter = new RateLimiter(config.rate_limiting);
@@ -103,8 +103,8 @@ export class ClientHandler extends EventEmitter {
         }
       }
 
-      // Sanitize message content
-      const sanitizationResult = this.sanitizer.sanitizeMessage(message);
+      // Sanitize message content (client to server direction)
+      const sanitizationResult = this.sanitizer.sanitizeMessage(message, 'client_to_server');
       
       if (!sanitizationResult.safe) {
         this.logger.warn('Message blocked by sanitization', {
@@ -132,7 +132,17 @@ export class ClientHandler extends EventEmitter {
         this.logger.info('Message sanitized', {
           connectionId: this.connectionId,
           messageId,
-          modifications: sanitizationResult.modifications
+          modifications: sanitizationResult.modifications,
+          hasApiKeys: sanitizationResult.hasApiKeys
+        });
+      }
+      
+      // Log if API keys were detected
+      if (sanitizationResult.hasApiKeys) {
+        this.emit('security-event', {
+          type: 'api_keys_detected',
+          messageId,
+          method: message.method
         });
       }
 
@@ -217,8 +227,9 @@ export class ClientHandler extends EventEmitter {
     );
 
     this.serverHandler.on('message', (message: MCPMessage) => {
-      // Apply sanitization to responses from MCP server
-      const sanitizationResult = this.sanitizer.sanitizeMessage(message);
+      // Apply sanitization to responses from MCP server (server to client direction)
+      // Note: We don't re-substitute API keys in responses going back to client
+      const sanitizationResult = this.sanitizer.sanitizeMessage(message, 'server_to_client');
       
       if (sanitizationResult.modified) {
         this.logger.info('Server response sanitized', {
@@ -270,6 +281,9 @@ export class ClientHandler extends EventEmitter {
   public close(): void {
     if (this.isClosing) return;
     this.isClosing = true;
+
+    // Clean up API keys for this connection
+    this.sanitizer.cleanupConnection();
 
     if (this.serverHandler) {
       this.serverHandler.close();

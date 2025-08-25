@@ -1,8 +1,9 @@
-import { Config } from '../config/loader';
 import { Logger } from '../monitoring/logger';
 import { AnsiFilter } from '../filters/ansi_filter';
 import { CharacterWhitelist } from '../filters/char_whitelist';
 import { PatternMatcher } from '../filters/pattern_match';
+import { ApiKeyDetector } from '../filters/api_key_detector';
+import { ApiKeyVault } from './api_key_vault';
 
 export interface SanitizationResult {
   success: boolean;
@@ -22,23 +23,38 @@ export class Sanitizer {
   private ansiFilter: AnsiFilter;
   private charWhitelist: CharacterWhitelist;
   private patternMatcher: PatternMatcher;
-  private config: Config;
+  private apiKeyDetector: ApiKeyDetector;
+  private apiKeyVault: ApiKeyVault;
+  private config: any;
   private logger: Logger;
+  private connectionId?: string;
 
-  constructor(config: any) {
+  constructor(config: any, connectionId?: string) {
     this.config = config;
     this.logger = new Logger();
+    this.connectionId = connectionId;
     this.ansiFilter = new AnsiFilter(config.sanitization?.ansi_escapes || {});
     this.charWhitelist = new CharacterWhitelist(config.sanitization?.character_whitelist || {});
     this.patternMatcher = new PatternMatcher(config.sanitization?.patterns || {});
+    this.apiKeyDetector = new ApiKeyDetector(config.api_key_protection?.detection || {});
+    this.apiKeyVault = new ApiKeyVault(config.api_key_protection?.storage || {});
   }
   
-  sanitizeMessage(message: any): { safe: boolean; modified: boolean; message: any; violations: string[]; modifications?: string[] } {
+  sanitizeMessage(message: any, direction: 'client_to_server' | 'server_to_client' = 'client_to_server'): { safe: boolean; modified: boolean; message: any; violations: string[]; modifications?: string[]; hasApiKeys?: boolean } {
     const violations: string[] = [];
     const modifications: string[] = [];
     let modified = false;
+    let hasApiKeys = false;
     
-    const sanitizedMessage = this.deepSanitize(message, violations, modifications);
+    // Apply API key detection and substitution
+    const processedMessage = this.processApiKeys(message, direction);
+    if (processedMessage.modified) {
+      modified = true;
+      hasApiKeys = true;
+      modifications.push('api_keys_substituted');
+    }
+    
+    const sanitizedMessage = this.deepSanitize(processedMessage.message, violations, modifications);
     
     if (modifications.length > 0) {
       modified = true;
@@ -49,7 +65,8 @@ export class Sanitizer {
       modified,
       message: sanitizedMessage,
       violations,
-      modifications
+      modifications,
+      hasApiKeys
     };
   }
   
@@ -246,6 +263,132 @@ export class Sanitizer {
       .replace(/on\w+\s*=\s*"[^"]*"/gi, '')
       .replace(/on\w+\s*=\s*'[^']*'/gi, '')
       .replace(/javascript:/gi, '');
+  }
+
+  private processApiKeys(obj: any, direction: 'client_to_server' | 'server_to_client'): { message: any; modified: boolean } {
+    if (!this.config.api_key_protection?.enabled) {
+      return { message: obj, modified: false };
+    }
+
+    // Only substitute on client_to_server direction
+    if (direction === 'client_to_server') {
+      return this.substituteApiKeys(obj);
+    }
+    
+    // For server_to_client, we don't re-substitute (keys stay as placeholders)
+    return { message: obj, modified: false };
+  }
+
+  private substituteApiKeys(obj: any): { message: any; modified: boolean } {
+    let modified = false;
+
+    if (typeof obj === 'string') {
+      const result = this.apiKeyDetector.replaceKeys(obj, (key, type) => {
+        if (!this.connectionId) {
+          this.logger.warn('Cannot store API key without connection ID');
+          return key;
+        }
+        const placeholder = this.apiKeyVault.storeKey(key, this.connectionId, type);
+        modified = true;
+        this.logger.info('API key substituted', {
+          type,
+          placeholder,
+          connectionId: this.connectionId
+        });
+        return placeholder;
+      });
+      return { message: result, modified };
+    }
+
+    if (Array.isArray(obj)) {
+      const result = [];
+      for (const item of obj) {
+        const processed = this.substituteApiKeys(item);
+        result.push(processed.message);
+        if (processed.modified) modified = true;
+      }
+      return { message: result, modified };
+    }
+
+    if (typeof obj === 'object' && obj !== null) {
+      const result: any = {};
+      for (const [key, value] of Object.entries(obj)) {
+        const processedValue = this.substituteApiKeys(value);
+        result[key] = processedValue.message;
+        if (processedValue.modified) modified = true;
+      }
+      return { message: result, modified };
+    }
+
+    return { message: obj, modified: false };
+  }
+
+  public resubstituteApiKeys(obj: any): { message: any; modified: boolean } {
+    if (!this.config.api_key_protection?.enabled || !this.connectionId) {
+      return { message: obj, modified: false };
+    }
+
+    return this.deepResubstitute(obj);
+  }
+
+  private deepResubstitute(obj: any): { message: any; modified: boolean } {
+    let modified = false;
+
+    if (typeof obj === 'string') {
+      if (this.apiKeyVault.isPlaceholder(obj)) {
+        const originalKey = this.apiKeyVault.retrieveKey(obj, this.connectionId!);
+        if (originalKey) {
+          this.logger.debug('API key re-substituted for MCP server', {
+            placeholder: obj,
+            connectionId: this.connectionId
+          });
+          return { message: originalKey, modified: true };
+        }
+      }
+      // Check for placeholders within the string
+      const placeholderPattern = /MCPROXY_KEY_[A-F0-9]{32}/g;
+      const result = obj.replace(placeholderPattern, (match) => {
+        const originalKey = this.apiKeyVault.retrieveKey(match, this.connectionId!);
+        if (originalKey) {
+          modified = true;
+          return originalKey;
+        }
+        return match;
+      });
+      return { message: result, modified };
+    }
+
+    if (Array.isArray(obj)) {
+      const result = [];
+      for (const item of obj) {
+        const processed = this.deepResubstitute(item);
+        result.push(processed.message);
+        if (processed.modified) modified = true;
+      }
+      return { message: result, modified };
+    }
+
+    if (typeof obj === 'object' && obj !== null) {
+      const result: any = {};
+      for (const [key, value] of Object.entries(obj)) {
+        const processedValue = this.deepResubstitute(value);
+        result[key] = processedValue.message;
+        if (processedValue.modified) modified = true;
+      }
+      return { message: result, modified };
+    }
+
+    return { message: obj, modified: false };
+  }
+
+  public setConnectionId(connectionId: string): void {
+    this.connectionId = connectionId;
+  }
+
+  public cleanupConnection(): void {
+    if (this.connectionId) {
+      this.apiKeyVault.removeConnectionKeys(this.connectionId);
+    }
   }
 
   private createResult(

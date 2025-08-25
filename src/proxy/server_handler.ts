@@ -2,6 +2,7 @@ import WebSocket from 'ws';
 import { EventEmitter } from 'events';
 import { Logger } from '../monitoring/logger';
 import { MCPMessage } from './client_handler';
+import { Sanitizer } from '../security/sanitizer';
 
 export class ServerHandler extends EventEmitter {
   private serverWs?: WebSocket;
@@ -9,6 +10,7 @@ export class ServerHandler extends EventEmitter {
   private connectionId: string;
   private config: any;
   private logger: Logger;
+  private sanitizer?: Sanitizer;
   private connected = false;
   private reconnectAttempts = 0;
   private maxReconnectAttempts = 5;
@@ -27,6 +29,11 @@ export class ServerHandler extends EventEmitter {
     this.serverUrl = serverUrl;
     this.config = config;
     this.logger = logger;
+    
+    // Initialize sanitizer if API key protection is enabled
+    if (config.api_key_protection?.enabled) {
+      this.sanitizer = new Sanitizer(config, connectionId);
+    }
   }
 
   public connect(): void {
@@ -200,10 +207,23 @@ export class ServerHandler extends EventEmitter {
       return;
     }
 
+    // Re-substitute API keys before sending to MCP server
+    let messageToSend = message;
+    if (this.sanitizer && this.config.api_key_protection?.enabled) {
+      const resubstitutionResult = this.sanitizer.resubstituteApiKeys(message);
+      if (resubstitutionResult.modified) {
+        this.logger.debug('API keys re-substituted for MCP server', {
+          connectionId: this.connectionId,
+          method: message.method
+        });
+        messageToSend = resubstitutionResult.message;
+      }
+    }
+
     // Queue message if not connected
     if (!this.connected) {
       if (this.messageQueue.length < (this.config.proxy?.max_queue_size || 100)) {
-        this.messageQueue.push(message);
+        this.messageQueue.push(messageToSend);
         this.logger.debug('Message queued for MCP server', {
           connectionId: this.connectionId,
           queueSize: this.messageQueue.length
@@ -211,7 +231,7 @@ export class ServerHandler extends EventEmitter {
       } else {
         this.logger.warn('Message queue full, dropping message', {
           connectionId: this.connectionId,
-          method: message.method
+          method: messageToSend.method
         });
       }
       return;
@@ -219,12 +239,12 @@ export class ServerHandler extends EventEmitter {
 
     try {
       if (this.serverWs.readyState === WebSocket.OPEN) {
-        this.serverWs.send(JSON.stringify(message));
+        this.serverWs.send(JSON.stringify(messageToSend));
         
         this.logger.debug('Message sent to MCP server', {
           connectionId: this.connectionId,
-          method: message.method,
-          hasParams: !!message.params
+          method: messageToSend.method,
+          hasParams: !!messageToSend.params
         });
       } else {
         this.logger.warn('MCP server WebSocket not open', {
@@ -234,7 +254,7 @@ export class ServerHandler extends EventEmitter {
         
         // Try to queue for later
         if (this.messageQueue.length < (this.config.proxy?.max_queue_size || 100)) {
-          this.messageQueue.push(message);
+          this.messageQueue.push(messageToSend);
         }
       }
     } catch (error) {

@@ -10,6 +10,8 @@ The MCP Security Proxy addresses critical security vulnerabilities in MCP implem
 
 - **Input Sanitization**: Character whitelisting, ANSI escape sequence filtering
 - **Attack Pattern Detection**: Command injection, path traversal, prompt injection
+- **API Key Protection**: 70+ patterns from TruffleHog with entropy validation
+- **Database Security**: Connection string detection and credential extraction
 - **Rate Limiting**: Per-client and per-method request throttling
 - **Audit Logging**: Comprehensive security event tracking
 - **Protocol Validation**: JSON-RPC message structure validation
@@ -143,8 +145,20 @@ npm start -- --port 8443 --server wss://secure-mcp-server:3000
 # Client connects to: wss://your-domain:8443
 ```
 
-## Todo
+## Features
 
+### Implemented
+- [x] WebSocket proxy with bidirectional communication
+- [x] Multi-layer input sanitization
+- [x] Attack pattern detection engine
+- [x] API key protection with 70+ service patterns (TruffleHog-based)
+- [x] Shannon entropy validation for false positive reduction
+- [x] Rate limiting framework
+- [x] Comprehensive audit logging
+- [x] Configuration management
+- [x] CLI interface
+
+### Roadmap
 - [ ] Authentication layer
 - [ ] Role-based access control (RBAC)
 - [ ] Extended metrics and monitoring
@@ -157,20 +171,23 @@ npm start -- --port 8443 --server wss://secure-mcp-server:3000
 │ MCP Client  │───▶│    MCP Security Proxy        │───▶│ MCP Server  │
 └─────────────┘    │                              │    └─────────────┘
                    │  1. Input Sanitization       │
-                   │  2. Pattern Detection        │
-                   │  3. Rate Limiting            │
-                   │  4. Message Validation       │
-                   │  5. Audit Logging            │
+                   │  2. API Key Protection       │
+                   │  3. Pattern Detection        │
+                   │  4. Rate Limiting            │
+                   │  5. Message Validation       │
+                   │  6. Audit Logging            │
                    └──────────────────────────────┘
 ```
 
 The proxy operates as a WebSocket server that:
 
 1. **Accepts connections** from MCP clients
-2. **Sanitizes all input** through multiple security filters
-3. **Forwards clean messages** to the configured MCP server
-4. **Logs security events** for monitoring and compliance
-5. **Returns responses** to clients with output sanitization
+2. **Detects and substitutes** API keys with secure placeholders
+3. **Sanitizes all input** through multiple security filters
+4. **Forwards clean messages** to the configured MCP server
+5. **Re-substitutes keys** only for trusted server communication
+6. **Logs security events** for monitoring and compliance
+7. **Returns responses** to clients with output sanitization
 
 ## Security Features
 
@@ -202,6 +219,33 @@ The proxy operates as a WebSocket server that:
 - Identifies attempts to override system instructions
 - Detects patterns like "ignore previous", "system:", "assistant:"
 - Configurable severity levels and responses
+
+### API Key Protection
+
+**Automatic Credential Detection**
+- Detects 70+ API key formats based on TruffleHog patterns
+- Comprehensive coverage including:
+  - Cloud providers: AWS (AKIA/ABIA/ACCA), Google Cloud, Azure
+  - AI services: OpenAI, Anthropic (updated pattern)
+  - Version control: GitHub (6 token types), GitLab
+  - Communication: Slack (5 token types), Discord, Twilio
+  - Development: Docker Hub, NPM, Datadog, Doppler
+  - Databases: MongoDB, PostgreSQL, MySQL, Redis connection strings
+  - Payment: Stripe (all key types with correct lengths)
+- Custom pattern support for proprietary key formats
+- Shannon entropy validation with service-specific thresholds
+- Reduced false positives through pattern refinement
+
+**Secure Substitution**
+- Replaces detected keys with secure placeholders
+- AES-256-GCM encryption for in-memory storage
+- Connection-specific key isolation
+- Automatic TTL-based expiration
+
+**Smart Re-substitution**
+- Re-substitutes keys only when sending to trusted MCP servers
+- Keeps placeholders in logs and client responses
+- Prevents credential exposure in training data
 
 ### Rate Limiting
 
@@ -250,6 +294,14 @@ sanitization:
       - name: "command_injection"
         pattern: "[;&|`$(){}\\[\\]<>]"
         action: "reject"
+
+api_key_protection:
+  enabled: true
+  detection:
+    builtin_patterns: true  # Detects OpenAI, AWS, GitHub, etc.
+  storage:
+    encryption: true
+    ttl: 3600  # 1 hour
 
 rate_limiting:
   enabled: true
@@ -346,6 +398,8 @@ npm test -- --coverage
 npm test -- sanitization
 npm test -- rate-limiting
 npm test -- patterns
+npm test -- api_key_protection
+npm test -- trufflehog_patterns
 ```
 
 ### Adding Security Patterns
@@ -387,11 +441,13 @@ CMD ["npm", "start"]
 
 - [ ] TLS enabled for client connections
 - [ ] Firewall rules configured
+- [ ] API key protection enabled
 - [ ] Rate limits set appropriately for your use case
 - [ ] Logging configured to secure location
 - [ ] Configuration file permissions restricted
 - [ ] Regular security updates scheduled
 - [ ] Monitoring and alerting configured
+- [ ] Vault encryption secret secured
 
 ### Performance Tuning
 
@@ -418,6 +474,7 @@ The proxy protects against:
 - **Console hijacking**: ANSI escape sequence attacks
 - **Prompt injection**: Attempts to override AI system instructions
 - **Path traversal**: File system access outside intended directories
+- **API key exposure**: Credential leakage in logs and training data
 - **Rate abuse**: Excessive request patterns
 
 ### Limitations
@@ -426,6 +483,7 @@ The proxy protects against:
 - Cannot detect all semantic attack patterns
 - Performance overhead from deep packet inspection
 - May block legitimate use of special characters if configured strictly
+- API keys must match known patterns for automatic detection
 
 ### Best Practices
 
@@ -443,6 +501,7 @@ The proxy protects against:
 - Check character whitelist configuration
 - Review pattern rules for false positives
 - Enable debug logging to see what's filtered
+- Verify API key patterns aren't causing false positives
 
 **Performance issues**
 - Adjust rate limiting parameters
@@ -493,3 +552,4 @@ For security vulnerabilities, please contact the maintainers directly rather tha
 - [Model Context Protocol Specification](https://modelcontextprotocol.io)
 - [CVE-2025-6514 Details](https://jfrog.com/blog/2025-6514-critical-mcp-remote-rce-vulnerability/)
 - [OWASP Input Validation Guide](https://cheatsheetseries.owasp.org/cheatsheets/Input_Validation_Cheat_Sheet.html)
+- [TruffleHog Secret Detection](https://github.com/trufflesecurity/trufflehog) - Source of API key patterns
